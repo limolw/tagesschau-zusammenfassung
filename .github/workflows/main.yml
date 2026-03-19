@@ -1,0 +1,40 @@
+name: Tagesschau Checker
+
+# Wann soll das Script laufen? Jeden Tag um 20:30 UTC (21:30/22:30 Uhr deutsche Zeit)
+on:
+  schedule:
+    - cron: '30 20 * * *'
+  workflow_dispatch: # Erlaubt den manuellen Start über einen Button
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # Erlaubt dem Bot, die data.json zu speichern
+
+    steps:
+      - name: Lade Code herunter
+        uses: actions/checkout@v4
+
+      - name: Python einrichten
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Installiere Werkzeuge
+        run: pip install -r requirements.txt
+
+      - name: Führe das Skript aus
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          MEINE_EMAIL: ${{ secrets.MEINE_EMAIL }}
+        run: python script.py
+
+      - name: Speichere neue Zusammenfassung auf GitHub
+        run: |
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+          git add data.json
+          git commit -m "Neue Tagesschau Zusammenfassung hinzugefügt" || exit 0
+          git push
