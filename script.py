@@ -21,11 +21,12 @@ def get_latest_video():
     print("Suche nach dem neuesten Video...")
     # Lade das Video in niedrigster Qualität herunter (spart Zeit, reicht für KI)
     ydl_opts = {
-        'format': 'worst',
-        'outtmpl': VIDEO_DATEINAME,
-        'playlist_items': '1', # Nur das erste (neueste) Video der Playlist
-        'quiet': False
-    }
+    'format': 'worst',
+    'outtmpl': VIDEO_DATEINAME,
+    'playlist_items': '1',
+    'quiet': False,
+    'extractor_args': {'youtube': {'player_client': ['android']}}
+}
     with YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(PLAYLIST_URL, download=True)
         video_titel = info['entries'][0]['title']
