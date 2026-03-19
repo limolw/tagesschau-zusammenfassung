@@ -14,39 +14,66 @@ genai.configure(api_key=GEMINI_API_KEY)
 VIDEO_DATEINAME = "tagesschau_video.mp4"
 
 def get_latest_tagesschau_video():
-    print("--- SCHRITT 1: SUCHE NACH ECHTEM MP4-VIDEO ---")
+    print("--- SCHRITT 1: DETEKTIV-SUCHE NACH VIDEO ---")
     api_url = "https://www.tagesschau.de/api2u/news/"
     
     try:
         response = requests.get(api_url)
         data = response.json()
         
+        # Erst mal alle Titel auflisten, damit wir sehen, was da ist
+        print("Gefundene Sendungen im Feed:")
         for item in data.get('news', []):
-            titel = item.get('title', '')
-            if "tagesschau" in titel.lower():
-                # Wir suchen jetzt gezielt in der Liste der Videos nach MP4
-                video_url = None
-                if item.get('video') and item['video'].get('videos'):
-                    # Wir gehen die Liste der Videos von hinten durch (meist beste Qualität zuerst)
-                    for v_entry in reversed(item['video']['videos']):
-                        url = v_entry.get('url', '')
-                        if url.lower().endswith('.mp4'): # NUR MP4 akzeptieren!
-                            video_url = url
-                            break
+            print(f"- {item.get('title')}")
+
+        video_url = None
+        finaler_titel = None
+
+        # Wir suchen in zwei Durchläufen: 
+        # 1. Erst nach der 20-Uhr-Sendung
+        # 2. Wenn nichts gefunden, nach IRGENDEINER Tagesschau
+        for suche_nach in ["20:00", "tagesschau"]:
+            print(f"Suche nach: {suche_nach}...")
+            for item in data.get('news', []):
+                titel = item.get('title', '')
                 
-                if video_url:
-                    print(f"Gefunden: {titel}")
-                    print(f"Lade MP4-Video herunter... {video_url}")
+                if suche_nach.lower() in titel.lower():
+                    # Wir prüfen alle Video-Quellen in diesem Item
+                    potential_videos = []
                     
-                    v_res = requests.get(video_url, stream=True)
-                    with open(VIDEO_DATEINAME, 'wb') as f:
-                        for chunk in v_res.iter_content(chunk_size=8192):
-                            f.write(chunk)
+                    # Suche in 'video' -> 'videos'
+                    if item.get('video') and item['video'].get('videos'):
+                        for v in item['video']['videos']:
+                            url = v.get('url', '')
+                            if url: potential_videos.append(url)
                     
-                    print("Download erfolgreich!")
-                    return titel
+                    # Suche in 'streams'
+                    if item.get('streams'):
+                        for key in item['streams']:
+                            url = item['streams'][key]
+                            if url: potential_videos.append(url)
+
+                    # Jetzt den besten Link aus den potenziellen Videos wählen
+                    for url in potential_videos:
+                        # Wir nehmen den ersten Link, der .mp4 enthält (egal ob am Ende oder nicht)
+                        if ".mp4" in url.lower():
+                            video_url = url
+                            finaler_titel = titel
+                            break
+                    
+                    if video_url: break
+            if video_url: break
+
+        if video_url:
+            print(f"ERFOLG! Lade Video: {finaler_titel}")
+            print(f"Quelle: {video_url}")
+            v_res = requests.get(video_url, stream=True)
+            with open(VIDEO_DATEINAME, 'wb') as f:
+                for chunk in v_res.iter_content(chunk_size=8192):
+                    f.write(chunk)
+            return finaler_titel
         
-        raise Exception("Keine passende MP4-Sendung gefunden.")
+        raise Exception("Keine Video-Datei gefunden. Evtl. sind gerade nur Text-News online.")
     except Exception as e:
         print(f"Fehler in Schritt 1: {e}")
         raise
@@ -56,15 +83,14 @@ def analyze_video_with_gemini():
     print("Video wird zu Google Gemini hochgeladen...")
     video_file = genai.upload_file(path=VIDEO_DATEINAME)
     
-    # Warten, bis Gemini die Datei wirklich verarbeitet hat
-    print(f"Hochgeladen. Status: {video_file.state.name}")
+    print(f"Status: {video_file.state.name}")
     while video_file.state.name == "PROCESSING":
         print(".", end="", flush=True)
         time.sleep(10)
         video_file = genai.get_file(video_file.name)
     
     if video_file.state.name != "ACTIVE":
-        raise Exception(f"Video konnte nicht aktiviert werden. Status: {video_file.state.name}")
+        raise Exception(f"Video konnte nicht aktiviert werden: {video_file.state.name}")
     
     print("\nGemini analysiert jetzt das Video...")
     model = genai.GenerativeModel(model_name="gemini-3.1-flash-lite-preview")
@@ -73,28 +99,23 @@ def analyze_video_with_gemini():
     Analysiere dieses Video der Tagesschau:
     1. Zusammenfassung der wichtigsten Themen (ca. 5 Sätze).
     2. Trennung durch '---VISUELL---'.
-    3. Beschreibung der visuellen Elemente (Kleidung der Sprecher, Grafiken, Orte).
+    3. Beschreibung der visuellen Elemente (Sprecher, Kleidung, Grafiken, Orte).
     Antworte auf Deutsch.
     """
     
     response = model.generate_content([video_file, prompt])
-    print("KI-Antwort erhalten.")
-    
     genai.delete_file(video_file.name)
     return response.text
 
 def save_and_mail(titel, ergebnis):
-    print("--- SCHRITT 3: WEBSITE & E-MAIL ---")
+    print("--- SCHRITT 3: FINALE ---")
     
-    teile = ergebnis.split("---VISUELL---")
-    zusammenfassung = teile[0].strip()
-    visuell = teile[1].strip() if len(teile) > 1 else "Keine visuelle Beschreibung."
-
+    # 1. Website-Speicherung
     eintrag = {
         "datum": datetime.now().strftime("%d.%m.%Y"),
         "titel": titel,
-        "zusammenfassung": zusammenfassung,
-        "visuell": visuell
+        "zusammenfassung": ergebnis.split("---VISUELL---")[0].strip(),
+        "visuell": ergebnis.split("---VISUELL---")[1].strip() if "---VISUELL---" in ergebnis else "Keine visuelle Beschreibung."
     }
 
     daten = []
@@ -109,7 +130,7 @@ def save_and_mail(titel, ergebnis):
             json.dump(daten, f, ensure_ascii=False, indent=4)
         print("Website aktualisiert.")
 
-    # E-Mail senden
+    # 2. E-Mail senden
     print(f"Sende E-Mail an {MEINE_EMAIL}...")
     html_content = f"<h2>{titel}</h2><p>{ergebnis.replace('---VISUELL---', '<br><hr><b>Visuelle Beschreibung:</b><br>').replace(chr(10), '<br>')}</p>"
     
@@ -123,9 +144,9 @@ def save_and_mail(titel, ergebnis):
             "html": html_content
         }
     )
-    print("Fertig!")
+    print("E-Mail versendet!")
 
-# Hauptprogramm starten
+# Start
 try:
     finaler_titel = get_latest_tagesschau_video()
     ki_ergebnis = analyze_video_with_gemini()
