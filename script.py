@@ -3,7 +3,6 @@ import time
 import json
 import requests
 import google.generativeai as genai
-from yt_dlp import YoutubeDL
 from datetime import datetime
 
 # API Keys aus GitHub Secrets laden
@@ -14,60 +13,61 @@ MEINE_EMAIL = os.getenv("MEINE_EMAIL")
 # Gemini konfigurieren
 genai.configure(api_key=GEMINI_API_KEY)
 
-PLAYLIST_URL = "https://www.youtube.com/playlist?list=PL4A2F331EE86DCC22"
 VIDEO_DATEINAME = "tagesschau.mp4"
 
-def get_latest_video():
-    print("Suche nach dem neuesten Video...")
-    # Lade das Video in niedrigster Qualität herunter (spart Zeit, reicht für KI)
-    ydl_opts = {
-    'format': 'worst',
-    'outtmpl': VIDEO_DATEINAME,
-    'playlist_items': '1',
-    'quiet': False,
-    'extractor_args': {'youtube': {'player_client': ['android']}}
-}
-    with YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(PLAYLIST_URL, download=True)
-        video_titel = info['entries'][0]['title']
-        return video_titel
+def get_latest_tagesschau():
+    print("Suche nach der neuesten 20-Uhr-Sendung in der Mediathek...")
+    # Wir fragen die offizielle Tagesschau-API ab
+    api_url = "https://www.tagesschau.de/api2u/news/"
+    response = requests.get(api_url)
+    data = response.json()
+    
+    # Wir suchen in den Nachrichten nach der Sendung "tagesschau 20:00 Uhr"
+    for item in data.get('news', []):
+        if 'tagesschau 20:00 Uhr' in item.get('title', '').lower():
+            # Wir suchen den Video-Link (MP4)
+            video_url = item.get('streams', {}).get('adaptivestreaming')
+            # Falls adaptiv nicht da ist, nehmen wir ein direktes MP4
+            if not video_url:
+                video_url = item.get('video', {}).get('videos', [{}])[-1].get('url')
+            
+            titel = item.get('title')
+            print(f"Video gefunden: {titel}")
+            
+            # Video herunterladen
+            print("Lade Video herunter...")
+            v_res = requests.get(video_url)
+            with open(VIDEO_DATEINAME, 'wb') as f:
+                f.write(v_res.content)
+            return titel
+            
+    raise Exception("Keine aktuelle 20-Uhr-Sendung gefunden.")
 
 def analyze_video():
     print("Lade Video zu Google Gemini hoch...")
     video_file = genai.upload_file(path=VIDEO_DATEINAME)
     
-    print("Warte, bis Gemini das Video verarbeitet hat...")
+    print("Warte auf KI-Verarbeitung...")
     while video_file.state.name == "PROCESSING":
-        time.sleep(10)
+        time.sleep(5)
         video_file = genai.get_file(video_file.name)
         
-    if video_file.state.name == "FAILED":
-        raise Exception("Video-Verarbeitung fehlgeschlagen.")
-
-    print("Starte KI-Analyse mit gemini-3.1-flash-lite-preview...")
-    # HIER: Genau das von dir gewünschte Modell!
     model = genai.GenerativeModel(model_name="gemini-3.1-flash-lite-preview")
     
     prompt = """
     Schau dir diese Tagesschau-Sendung an.
     1. Erstelle eine inhaltliche Zusammenfassung der wichtigsten Nachrichten (ca. 4-5 Sätze).
     2. Trenne dies dann mit '---VISUELL---' ab.
-    3. Beschreibe danach detailliert, was im Video visuell zu sehen ist (z.B. Kleidung der Sprecher, gezeigte Grafiken, Orte in den Einspielern).
+    3. Beschreibe danach detailliert, was im Video visuell zu sehen ist.
     """
     
     response = model.generate_content([video_file, prompt])
-    
-    # Datei bei Google wieder löschen (Aufräumen)
     genai.delete_file(video_file.name)
-    
     return response.text
 
 def send_email(titel, text):
-    print("Sende E-Mail via Resend...")
-    headers = {
-        "Authorization": f"Bearer {RESEND_API_KEY}",
-        "Content-Type": "application/json"
-    }
+    print("Sende E-Mail...")
+    headers = {"Authorization": f"Bearer {RESEND_API_KEY}", "Content-Type": "application/json"}
     data = {
         "from": "Tagesschau Bot <onboarding@resend.dev>",
         "to": [MEINE_EMAIL],
@@ -77,12 +77,10 @@ def send_email(titel, text):
     requests.post("https://api.resend.com/emails", headers=headers, json=data)
 
 def update_website(titel, inhalt_komplett):
-    print("Aktualisiere die Website-Datenbank...")
-    
-    # Text aufteilen in Inhalt und visuelle Beschreibung
+    print("Speichere Daten...")
     teile = inhalt_komplett.split("---VISUELL---")
     zusammenfassung = teile[0].strip()
-    visuell = teile[1].strip() if len(teile) > 1 else "Keine visuelle Beschreibung verfügbar."
+    visuell = teile[1].strip() if len(teile) > 1 else "Keine visuelle Beschreibung."
 
     neuer_eintrag = {
         "datum": datetime.now().strftime("%d.%m.%Y"),
@@ -91,33 +89,27 @@ def update_website(titel, inhalt_komplett):
         "visuell": visuell
     }
 
-    # Alte Daten laden
-    with open("data.json", "r", encoding="utf-8") as file:
-        daten = json.load(file)
+    if os.path.exists("data.json"):
+        with open("data.json", "r", encoding="utf-8") as f:
+            daten = json.load(f)
+    else:
+        daten = []
     
-    # Prüfen, ob das Video schon bearbeitet wurde (Anhand des Titels)
-    for eintrag in daten:
-        if eintrag["titel"] == titel:
-            print("Video wurde bereits an einem anderen Tag verarbeitet. Abbruch.")
-            return False
+    if any(e["titel"] == titel for e in daten):
+        print("Dieses Video haben wir schon.")
+        return False
             
-    # Neuen Eintrag hinzufügen
     daten.append(neuer_eintrag)
-    
-    # Speichern
-    with open("data.json", "w", encoding="utf-8") as file:
-        json.dump(daten, file, ensure_ascii=False, indent=4)
-        
+    with open("data.json", "w", encoding="utf-8") as f:
+        json.dump(daten, f, ensure_ascii=False, indent=4)
     return True
 
 # --- HAUPTPROGRAMM ---
 try:
-    titel = get_latest_video()
+    titel = get_latest_tagesschau()
     ergebnis = analyze_video()
-    
     if update_website(titel, ergebnis):
         send_email(titel, ergebnis)
-        print("Erfolgreich abgeschlossen!")
-        
+        print("FERTIG!")
 except Exception as e:
     print(f"Ein Fehler ist aufgetreten: {e}")
