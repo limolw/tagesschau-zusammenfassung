@@ -5,50 +5,65 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Tagesschau KI-Ticker</title>
     <style>
-        :root { --tagesschau-blau: #003082; --hellblau: #00aaff; }
-        body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; max-width: 900px; margin: 0 auto; padding: 40px 20px; background-color: #f4f7f9; color: #333; }
-        h1 { color: var(--tagesschau-blau); text-align: center; font-size: 2.5em; margin-bottom: 40px; text-transform: uppercase; letter-spacing: 2px; border-bottom: 4px solid var(--tagesschau-blau); display: inline-block; width: 100%; padding-bottom: 10px; }
-        .post { background: white; padding: 30px; margin-bottom: 40px; border-radius: 15px; box-shadow: 0 10px 30px rgba(0,0,0,0.05); border-top: 6px solid var(--hellblau); }
-        .date { color: #888; font-weight: bold; font-size: 0.9em; margin-bottom: 5px; }
-        .title { color: var(--tagesschau-blau); margin: 0 0 20px 0; font-size: 1.8em; line-height: 1.2; }
-        .summary { font-size: 1.1em; line-height: 1.7; margin-bottom: 25px; color: #444; }
-        .visuals-box { background: #f0f4f8; padding: 20px; border-radius: 10px; font-size: 0.95em; color: #555; }
-        .visuals-label { font-weight: bold; color: var(--hellblau); display: block; margin-bottom: 10px; font-size: 0.8em; text-transform: uppercase; }
-        /* Hier passiert die Magie für das Fettgedruckte */
-        strong { color: var(--tagesschau-blau); }
+        :root { --ts-blau: #003082; --ts-hell: #00aaff; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; background-color: #f0f2f5; color: #333; }
+        h1 { color: var(--ts-blau); text-align: center; border-bottom: 4px solid var(--ts-blau); padding-bottom: 15px; margin-bottom: 30px; }
+        .post { background: white; padding: 25px; margin-bottom: 30px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); border-left: 8px solid var(--ts-hell); }
+        .date { color: #888; font-weight: bold; font-size: 0.85em; margin-bottom: 5px; }
+        .title { color: var(--ts-blau); margin: 0 0 15px 0; font-size: 1.6em; }
+        .summary { font-size: 1.1em; line-height: 1.6; margin-bottom: 20px; white-space: pre-wrap; }
+        .visuals { background: #f8f9fa; padding: 15px; border-radius: 8px; font-size: 0.95em; color: #555; }
+        .visuals-label { font-weight: bold; color: var(--ts-hell); display: block; margin-bottom: 8px; text-transform: uppercase; font-size: 0.75em; }
+        strong { color: var(--ts-blau); font-weight: 700; }
+        #status { text-align: center; padding: 20px; color: #666; font-style: italic; }
     </style>
 </head>
 <body>
     <h1>Tagesschau Fokus 📺</h1>
-    <div id="content">Lade neueste Analysen...</div>
+    <div id="content"><div id="status">Lade Daten vom Server...</div></div>
 
     <script>
-        function formatText(text) {
+        function cleanMarkdown(text) {
             if (!text) return "";
-            return text
-                .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>') // Wandelt **Text** in Fettduck um
-                .replace(/\n/g, '<br>'); // Zeilenumbrüche
+            // Wandelt **Text** in <strong>Text</strong> um
+            return text.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
         }
 
-        fetch('data.json?v=' + new Date().getTime())
-            .then(res => res.json())
-            .then(data => {
-                const container = document.getElementById('content');
+        async function loadData() {
+            const container = document.getElementById('content');
+            try {
+                // Wir erzwingen das Laden der frischen Datei
+                const response = await fetch('data.json?t=' + Date.now());
+                if (!response.ok) throw new Error("Datei nicht gefunden");
+                
+                const data = await response.json();
+                
+                if (data.length === 0) {
+                    container.innerHTML = '<div id="status">Das Archiv ist noch leer. Der Roboter läuft...</div>';
+                    return;
+                }
+
                 container.innerHTML = '';
                 data.slice().reverse().forEach(item => {
-                    container.innerHTML += `
-                        <div class="post">
-                            <div class="date">${item.datum}</div>
-                            <h2 class="title">${item.titel}</h2>
-                            <div class="summary">${formatText(item.zusammenfassung)}</div>
-                            <div class="visuals-box">
-                                <span class="visuals-label">Visuelle Analyse</span>
-                                ${formatText(item.visuell)}
-                            </div>
+                    const post = document.createElement('div');
+                    post.className = 'post';
+                    post.innerHTML = `
+                        <div class="date">${item.datum}</div>
+                        <h2 class="title">${item.titel}</h2>
+                        <div class="summary">${cleanMarkdown(item.zusammenfassung)}</div>
+                        <div class="visuals">
+                            <span class="visuals-label">Visuelle Analyse</span>
+                            ${cleanMarkdown(item.visuell)}
                         </div>
                     `;
+                    container.appendChild(post);
                 });
-            });
+            } catch (err) {
+                container.innerHTML = '<div id="status">Fehler beim Laden: ' + err.message + '<br>Bitte prüfe, ob data.json auf GitHub gefüllt ist.</div>';
+            }
+        }
+
+        loadData();
     </script>
 </body>
 </html>
