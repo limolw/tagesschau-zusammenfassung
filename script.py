@@ -13,63 +13,70 @@ MEINE_EMAIL = os.getenv("MEINE_EMAIL")
 genai.configure(api_key=GEMINI_API_KEY)
 VIDEO_DATEINAME = "tagesschau_video.mp4"
 
-def get_latest_tagesschau_video():
-    print("--- SCHRITT 1: SUCHE NACH VIDEO ---")
-    api_url = "https://www.tagesschau.de/api2u/news/"
-    try:
-        response = requests.get(api_url)
-        data = response.json()
-        
-        print("Gefundene Titel in der API:")
-        for item in data.get('news', []):
-            titel = item.get('title', '')
-            print(f"- {titel}")
-            
-            # Suche nach allem, was 'tagesschau' im Namen hat
-            if "tagesschau" in titel.lower():
-                video_url = None
-                
-                # Wir sammeln alle Links aus dem Video-Bereich
-                potential_urls = []
-                if item.get('video') and item['video'].get('videos'):
-                    for v in item['video']['videos']:
-                        potential_urls.append(v.get('url', ''))
-                
-                # Wir suchen in den gesammelten Links nach .mp4
-                for url in potential_urls:
-                    if ".mp4" in url.lower():
-                        video_url = url
-                        break
-                
-                if video_url:
-                    # TITEL SÄUBERN: Alles was technisch aussieht (Zahlen, Unterstriche, Endungen) weg
-                    # Wir nehmen einfach "Tagesschau" + die Uhrzeit, falls vorhanden
-                    sauberer_titel = "Tagesschau"
-                    if "20:00" in titel: sauberer_titel = "Tagesschau 20:00 Uhr"
-                    elif "14:00" in titel: sauberer_titel = "Tagesschau 14:00 Uhr"
-                    elif "17:00" in titel: sauberer_titel = "Tagesschau 17:00 Uhr"
-                    else:
-                        # Fallback: Erster Teil des Titels vor dem ersten Leerzeichen/Unterstrich
-                        sauberer_titel = titel.split(' ')[0].split('_')[0]
+def find_any_mp4(data):
+    """Sucht rekursiv in allen Datenfeldern nach einem MP4-Link"""
+    if isinstance(data, str):
+        if ".mp4" in data.lower() and data.startswith("http"):
+            return data
+    elif isinstance(data, dict):
+        for value in data.values():
+            result = find_any_mp4(value)
+            if result: return result
+    elif isinstance(data, list):
+        for item in data:
+            result = find_any_mp4(item)
+            if result: return result
+    return None
 
-                    print(f"ERFOLG! Nehme Video: {sauberer_titel}")
-                    print(f"Download-URL: {video_url}")
+def get_latest_tagesschau_video():
+    print("--- SCHRITT 1: TIEFENSUCHE NACH VIDEO ---")
+    # Wir prüfen zwei verschiedene API-Quellen für maximale Erfolgschance
+    urls = [
+        "https://www.tagesschau.de/api2u/news/",
+        "https://www.tagesschau.de/api2u/channels/"
+    ]
+    
+    for api_url in urls:
+        print(f"Prüfe API: {api_url}")
+        try:
+            response = requests.get(api_url)
+            data = response.json()
+            
+            # Wir suchen in 'news' oder in 'channels'
+            items = data.get('news', []) + data.get('channels', [])
+            
+            for item in items:
+                titel = item.get('title', '')
+                # Wir suchen nach der großen Sendung (20:00, 14:00 etc.)
+                if "tagesschau" in titel.lower() and "100 sekunden" not in titel.lower():
                     
-                    v_res = requests.get(video_url, stream=True)
-                    with open(VIDEO_DATEINAME, 'wb') as f:
-                        for chunk in v_res.iter_content(chunk_size=8192):
-                            f.write(chunk)
-                    return sauberer_titel
+                    # TIEFENSUCHE nach MP4
+                    video_url = find_any_mp4(item)
                     
-        raise Exception("Kein Video mit .mp4 Link im Feed gefunden.")
-    except Exception as e:
-        print(f"Fehler: {e}")
-        raise
+                    if video_url:
+                        # Titel säubern
+                        sauberer_titel = "Tagesschau"
+                        for zeit in ["20:00", "17:00", "14:00", "12:00"]:
+                            if zeit in titel: sauberer_titel = f"Tagesschau {zeit} Uhr"
+                        
+                        print(f"GEFUNDEN: {titel}")
+                        print(f"Download-URL: {video_url}")
+                        
+                        v_res = requests.get(video_url, stream=True)
+                        with open(VIDEO_DATEINAME, 'wb') as f:
+                            for chunk in v_res.iter_content(chunk_size=8192):
+                                f.write(chunk)
+                        return sauberer_titel
+        except Exception as e:
+            print(f"Fehler bei {api_url}: {e}")
+            continue
+            
+    raise Exception("Keine Video-Datei in allen API-Quellen gefunden.")
 
 def analyze_video_with_gemini():
     print("--- SCHRITT 2: KI ANALYSE ---")
     video_file = genai.upload_file(path=VIDEO_DATEINAME)
-    print(f"Video hochgeladen ({video_file.name}). Warte auf KI...")
+    print(f"Video hochgeladen. Gemini verarbeitet...")
     
     while video_file.state.name == "PROCESSING":
         time.sleep(10)
@@ -77,7 +84,7 @@ def analyze_video_with_gemini():
     
     model = genai.GenerativeModel(model_name="gemini-3.1-flash-lite-preview")
     prompt = """Analysiere dieses Video der Tagesschau. 
-    1. Zusammenfassung der Themen (4-5 Sätze). 
+    1. Zusammenfassung der Themen (ca. 5 Sätze). 
     2. Trenne mit '---VISUELL---'. 
     3. Beschreibung der visuellen Elemente. 
     Antworte auf Deutsch. Nutze Fettdruck mit ** für wichtige Begriffe."""
@@ -87,9 +94,12 @@ def analyze_video_with_gemini():
     return response.text
 
 def save_and_mail(titel, ergebnis):
-    print("--- SCHRITT 3: SPEICHERN ---")
+    print("--- SCHRITT 3: FINALE ---")
+    # Datum von HEUTE nutzen
+    heute = datetime.now().strftime("%d.%m.%Y")
+    
     eintrag = {
-        "datum": datetime.now().strftime("%d.%m.%Y"),
+        "datum": heute,
         "titel": titel,
         "zusammenfassung": ergebnis.split("---VISUELL---")[0].strip(),
         "visuell": ergebnis.split("---VISUELL---")[1].strip() if "---VISUELL---" in ergebnis else ""
@@ -101,12 +111,10 @@ def save_and_mail(titel, ergebnis):
             try: daten = json.load(f)
             except: daten = []
     
-    # Im Test-Modus lassen wir Duplikate zu, indem wir den Titel mit Zeitstempel versehen, 
-    # falls er schon da ist (so kannst du mehrmals testen)
-    if any(d["titel"] == titel for d in daten):
-        titel = f"{titel} ({datetime.now().strftime('%H:%M')})"
-        eintrag["titel"] = titel
-
+    # Immer speichern (mit Uhrzeit im Titel falls nötig)
+    zeit_jetzt = datetime.now().strftime("%H:%M")
+    eintrag["titel"] = f"{titel} (Update {zeit_jetzt})"
+    
     daten.append(eintrag)
     with open("data.json", "w", encoding="utf-8") as f:
         json.dump(daten, f, ensure_ascii=False, indent=4)
