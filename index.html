@@ -3,40 +3,59 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Tagesschau Zusammenfassungen</title>
+    <title>Tagesschau KI-Zusammenfassung</title>
     <style>
-        body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; line-height: 1.6; background-color: #f4f4f9; }
-        h1 { color: #1d3557; text-align: center; }
-        .post { background: white; padding: 20px; margin-bottom: 20px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
-        .date { color: #e63946; font-size: 0.9em; font-weight: bold; }
-        .visuals { background: #e9ecef; padding: 10px; border-left: 4px solid #457b9d; margin-top: 15px; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; line-height: 1.6; background-color: #f0f2f5; color: #1c1e21; }
+        h1 { color: #003082; text-align: center; border-bottom: 3px solid #003082; padding-bottom: 10px; }
+        .post { background: white; padding: 25px; margin-bottom: 30px; border-radius: 12px; box-shadow: 0 2px 12px rgba(0,0,0,0.1); }
+        .date { color: #65676b; font-weight: bold; font-size: 0.9em; margin-bottom: 10px; }
+        .title { color: #003082; margin-top: 0; font-size: 1.4em; }
+        .summary { margin-bottom: 20px; white-space: pre-wrap; }
+        .visuals { background: #f8f9fa; padding: 15px; border-left: 5px solid #00aaff; border-radius: 4px; font-size: 0.95em; white-space: pre-wrap; }
+        .label { font-weight: bold; color: #00aaff; display: block; margin-bottom: 5px; text-transform: uppercase; font-size: 0.8em; }
+        #error-msg { color: red; text-align: center; display: none; background: #ffe6e6; padding: 10px; border-radius: 5px; }
     </style>
 </head>
 <body>
     <h1>Tagesschau in Kürze 📺</h1>
+    <div id="error-msg"></div>
     <div id="content">Lade Zusammenfassungen...</div>
 
     <script>
-        fetch('data.json')
-            .then(response => response.json())
+        // Wir fügen ein "?v=" hinzu, damit der Browser nicht die alte Version aus dem Cache lädt
+        fetch('data.json?v=' + new Date().getTime())
+            .then(response => {
+                if (!response.ok) throw new Error("Konnte data.json nicht laden (Status: " + response.status + ")");
+                return response.json();
+            })
             .then(data => {
                 const container = document.getElementById('content');
+                if (data.length === 0) {
+                    container.innerHTML = "Noch keine Zusammenfassungen vorhanden. Der Roboter läuft jeden Abend!";
+                    return;
+                }
                 container.innerHTML = '';
-                // Neueste zuerst anzeigen
-                data.reverse().forEach(item => {
+                // Neueste Beiträge oben anzeigen
+                data.slice().reverse().forEach(item => {
                     container.innerHTML += `
                         <div class="post">
                             <div class="date">${item.datum}</div>
-                            <h3>${item.titel}</h3>
-                            <p>${item.zusammenfassung.replace(/\n/g, '<br>')}</p>
+                            <h2 class="title">${item.titel}</h2>
+                            <div class="summary">${item.zusammenfassung}</div>
                             <div class="visuals">
-                                <strong>Visuelle Beschreibung:</strong><br>
-                                ${item.visuell.replace(/\n/g, '<br>')}
+                                <span class="label">Was im Video zu sehen ist:</span>
+                                ${item.visuell}
                             </div>
                         </div>
                     `;
                 });
-            }).catch(() => document.getElementById('content').innerHTML = "Noch keine Daten vorhanden.");
+            })
+            .catch(error => {
+                console.error(error);
+                document.getElementById('error-msg').style.display = 'block';
+                document.getElementById('error-msg').innerText = "Fehler: " + error.message;
+                document.getElementById('content').innerText = "Bitte Seite neu laden.";
+            });
     </script>
 </body>
 </html>
