@@ -1,28 +1,29 @@
 name: Tagesschau Checker
 
-# Wann soll das Script laufen? Jeden Tag um 20:30 UTC (21:30/22:30 Uhr deutsche Zeit)
 on:
   schedule:
     - cron: '30 20 * * *'
-  workflow_dispatch: # Erlaubt den manuellen Start über einen Button
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: write # Erlaubt dem Bot, die data.json zu speichern
+      contents: write # Ganz wichtig für das Speichern
 
     steps:
       - name: Lade Code herunter
         uses: actions/checkout@v4
+        with:
+          persist-credentials: true # Hält die Verbindung zu GitHub offen
 
       - name: Python einrichten
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: '3.11'
 
       - name: Installiere Werkzeuge
-        run: pip install -r requirements.txt
+        run: pip install requests google-generativeai
 
       - name: Führe das Skript aus
         env:
@@ -36,5 +37,6 @@ jobs:
           git config --global user.name 'github-actions[bot]'
           git config --global user.email 'github-actions[bot]@users.noreply.github.com'
           git add data.json
-          git commit -m "Neue Tagesschau Zusammenfassung hinzugefügt" || exit 0
-          git push
+          # Falls keine Änderung da ist, wird kein Fehler geworfen
+          git commit -m "Automatisches Update: Neue Zusammenfassung" || exit 0
+          git push origin main
