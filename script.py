@@ -14,36 +14,29 @@ genai.configure(api_key=GEMINI_API_KEY)
 VIDEO_DATEINAME = "tagesschau_video.mp4"
 
 def get_latest_tagesschau_video():
-    print("--- SCHRITT 1: SUCHE NACH VIDEO-SENDUNG ---")
-    # Wir nutzen den News-Feed, der ist am zuverlässigsten
+    print("--- SCHRITT 1: SUCHE NACH ECHTEM MP4-VIDEO ---")
     api_url = "https://www.tagesschau.de/api2u/news/"
     
     try:
         response = requests.get(api_url)
         data = response.json()
         
-        # Wir gehen alle Nachrichten durch
         for item in data.get('news', []):
             titel = item.get('title', '')
-            # Wir suchen nach "tagesschau" (egal ob 20 Uhr oder allgemein)
             if "tagesschau" in titel.lower():
-                # Prüfen, ob dieses Item ein Video hat
+                # Wir suchen jetzt gezielt in der Liste der Videos nach MP4
                 video_url = None
+                if item.get('video') and item['video'].get('videos'):
+                    # Wir gehen die Liste der Videos von hinten durch (meist beste Qualität zuerst)
+                    for v_entry in reversed(item['video']['videos']):
+                        url = v_entry.get('url', '')
+                        if url.lower().endswith('.mp4'): # NUR MP4 akzeptieren!
+                            video_url = url
+                            break
                 
-                # Weg A: Direktes Video-Feld
-                if item.get('video'):
-                    videos = item['video'].get('videos', [])
-                    if videos:
-                        # Wir nehmen das Video mit der höchsten Qualität (meist das letzte in der Liste)
-                        video_url = videos[-1].get('url')
-                
-                # Weg B: Streaming-Feld (falls A nicht klappt)
-                if not video_url and item.get('streams'):
-                    video_url = item['streams'].get('adaptivestreaming')
-
                 if video_url:
                     print(f"Gefunden: {titel}")
-                    print(f"Lade Video... {video_url}")
+                    print(f"Lade MP4-Video herunter... {video_url}")
                     
                     v_res = requests.get(video_url, stream=True)
                     with open(VIDEO_DATEINAME, 'wb') as f:
@@ -53,7 +46,7 @@ def get_latest_tagesschau_video():
                     print("Download erfolgreich!")
                     return titel
         
-        raise Exception("Kein Tagesschau-Video in den aktuellen News gefunden.")
+        raise Exception("Keine passende MP4-Sendung gefunden.")
     except Exception as e:
         print(f"Fehler in Schritt 1: {e}")
         raise
@@ -63,20 +56,24 @@ def analyze_video_with_gemini():
     print("Video wird zu Google Gemini hochgeladen...")
     video_file = genai.upload_file(path=VIDEO_DATEINAME)
     
+    # Warten, bis Gemini die Datei wirklich verarbeitet hat
     print(f"Hochgeladen. Status: {video_file.state.name}")
     while video_file.state.name == "PROCESSING":
         print(".", end="", flush=True)
         time.sleep(10)
         video_file = genai.get_file(video_file.name)
     
-    print("\nGemini analysiert jetzt das Video (das dauert)...")
+    if video_file.state.name != "ACTIVE":
+        raise Exception(f"Video konnte nicht aktiviert werden. Status: {video_file.state.name}")
+    
+    print("\nGemini analysiert jetzt das Video...")
     model = genai.GenerativeModel(model_name="gemini-3.1-flash-lite-preview")
     
     prompt = """
     Analysiere dieses Video der Tagesschau:
     1. Zusammenfassung der wichtigsten Themen (ca. 5 Sätze).
     2. Trennung durch '---VISUELL---'.
-    3. Beschreibung der visuellen Elemente (Kleidung der Sprecher, Grafiken im Hintergrund, Orte der Reportagen).
+    3. Beschreibung der visuellen Elemente (Kleidung der Sprecher, Grafiken, Orte).
     Antworte auf Deutsch.
     """
     
@@ -89,7 +86,6 @@ def analyze_video_with_gemini():
 def save_and_mail(titel, ergebnis):
     print("--- SCHRITT 3: WEBSITE & E-MAIL ---")
     
-    # Website-Daten speichern (data.json)
     teile = ergebnis.split("---VISUELL---")
     zusammenfassung = teile[0].strip()
     visuell = teile[1].strip() if len(teile) > 1 else "Keine visuelle Beschreibung."
@@ -107,10 +103,7 @@ def save_and_mail(titel, ergebnis):
             try: daten = json.load(f)
             except: daten = []
     
-    # Nur speichern, wenn wir diesen Titel noch nicht im Archiv haben
-    if any(d["titel"] == titel for d in daten):
-        print("Diese Sendung ist bereits auf der Website.")
-    else:
+    if not any(d["titel"] == titel for d in daten):
         daten.append(eintrag)
         with open("data.json", "w", encoding="utf-8") as f:
             json.dump(daten, f, ensure_ascii=False, indent=4)
@@ -120,7 +113,7 @@ def save_and_mail(titel, ergebnis):
     print(f"Sende E-Mail an {MEINE_EMAIL}...")
     html_content = f"<h2>{titel}</h2><p>{ergebnis.replace('---VISUELL---', '<br><hr><b>Visuelle Beschreibung:</b><br>').replace(chr(10), '<br>')}</p>"
     
-    resend_res = requests.post(
+    requests.post(
         "https://api.resend.com/emails",
         headers={"Authorization": f"Bearer {RESEND_API_KEY}", "Content-Type": "application/json"},
         json={
@@ -130,13 +123,13 @@ def save_and_mail(titel, ergebnis):
             "html": html_content
         }
     )
-    print(f"Resend Status: {resend_res.status_code}")
+    print("Fertig!")
 
 # Hauptprogramm starten
 try:
     finaler_titel = get_latest_tagesschau_video()
     ki_ergebnis = analyze_video_with_gemini()
     save_and_mail(finaler_titel, ki_ergebnis)
-    print("--- FERTIG! ALLES GEKLAPPT! ---")
+    print("--- ALLES ERFOLGREICH! ---")
 except Exception as e:
     print(f"FEHLER: {e}")
