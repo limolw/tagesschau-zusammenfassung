@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tagesschau Zusammenfassungen</title>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; line-height: 1.6; background-color: #f4f4f9; }
+        h1 { color: #1d3557; text-align: center; }
+        .post { background: white; padding: 20px; margin-bottom: 20px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        .date { color: #e63946; font-size: 0.9em; font-weight: bold; }
+        .visuals { background: #e9ecef; padding: 10px; border-left: 4px solid #457b9d; margin-top: 15px; }
+    </style>
+</head>
+<body>
+    <h1>Tagesschau in Kürze 📺</h1>
+    <div id="content">Lade Zusammenfassungen...</div>
+
+    <script>
+        fetch('data.json')
+            .then(response => response.json())
+            .then(data => {
+                const container = document.getElementById('content');
+                container.innerHTML = '';
+                // Neueste zuerst anzeigen
+                data.reverse().forEach(item => {
+                    container.innerHTML += `
+                        <div class="post">
+                            <div class="date">${item.datum}</div>
+                            <h3>${item.titel}</h3>
+                            <p>${item.zusammenfassung.replace(/\n/g, '<br>')}</p>
+                            <div class="visuals">
+                                <strong>Visuelle Beschreibung:</strong><br>
+                                ${item.visuell.replace(/\n/g, '<br>')}
+                            </div>
+                        </div>
+                    `;
+                });
+            }).catch(() => document.getElementById('content').innerHTML = "Noch keine Daten vorhanden.");
+    </script>
+</body>
+</html>
